@@ -8,6 +8,15 @@ const CHAT_STARTERS = [
   "Why is burn accelerating?",
   "Which vendors should I cancel?",
   "What's our biggest collection risk?",
+  "Show me everything that needs CFO attention this week",
+  "What did the previous VP of Finance miss?",
+] as const;
+
+const HUMAN_ANALYST_FINDINGS = [
+  "Burn rate increased — weekly burn up from $180K to $310K, monitor.",
+  "AR aging needs review — total $48K in the 90+ bucket.",
+  "Marketing over budget.",
+  "Some AP invoices pending.",
 ] as const;
 
 const NUMERIC_TOKEN =
@@ -23,6 +32,25 @@ function formatChatText(text: string): ReactNode[] {
     ) : (
       part
     )
+  );
+}
+
+function formatChatMessage(content: string): ReactNode {
+  const lines = content.split("\n");
+  const sourceIndex = lines.findIndex((line) => /^Sources:/i.test(line.trim()));
+
+  if (sourceIndex === -1) {
+    return <>{formatChatText(content)}</>;
+  }
+
+  const body = lines.slice(0, sourceIndex).join("\n").trimEnd();
+  const sources = lines.slice(sourceIndex).join("\n").trim();
+
+  return (
+    <>
+      {body ? formatChatText(body) : null}
+      {sources ? <div className="chat-sources">{sources}</div> : null}
+    </>
   );
 }
 
@@ -143,6 +171,7 @@ export default function Page() {
   const [chatInput, setChatInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
+  const [reviewView, setReviewView] = useState<"ai" | "human">("ai");
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -464,7 +493,7 @@ export default function Page() {
           {chatMessages.map((msg, i) => (
             <div key={i} className={`chat-msg chat-msg-${msg.role}`}>
               <div className="chat-msg-label">{msg.role === "user" ? "You" : "Finance Agent"}</div>
-              <div className="chat-msg-body">{formatChatText(msg.content)}</div>
+              <div className="chat-msg-body">{formatChatMessage(msg.content)}</div>
             </div>
           ))}
           {chatLoading && (
@@ -505,89 +534,133 @@ export default function Page() {
         </form>
       </div>
 
-      <div className="agents-header">
-        <div className="agents-title">Agent Team</div>
-        <div className="briefing-meta">8 findings &middot; 5 agents</div>
+      <div className="view-toggle-wrap">
+        <div className="view-toggle" role="tablist" aria-label="Review mode">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={reviewView === "human"}
+            className={`view-toggle-btn ${reviewView === "human" ? "active" : ""}`}
+            onClick={() => setReviewView("human")}
+          >
+            Human Analyst View
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={reviewView === "ai"}
+            className={`view-toggle-btn ${reviewView === "ai" ? "active" : ""}`}
+            onClick={() => setReviewView("ai")}
+          >
+            AI Agent Team View
+          </button>
+        </div>
+        <div className="view-toggle-caption">
+          Same data. Same week. One version finds <span className="caption-num">$14,500</span>{" "}
+          to claw back. The other doesn&apos;t.
+        </div>
       </div>
 
-      <div className="agents-grid">
-        {AGENTS.map((a) => {
-          const isRouter = a.name === "Escalation Router";
-          const findings = DATA.findings.filter((f) => f.agent === a.name);
-          const s = agentState[a.name];
-          const statusCls = s.status === "running" ? "running" : s.status === "done" ? "done" : "";
-          return (
-            <div key={a.name} className={`agent ${statusCls} ${isRouter ? "routerwide" : ""}`}>
-              <div className="agent-head">
-                <div className="agent-head-left">
-                  <div className="agent-icon">{ICONS[a.icon]}</div>
-                  <div>
-                    <div className="agent-name">{a.name}</div>
-                    <div className="agent-sub" dangerouslySetInnerHTML={{ __html: a.sub }} />
+      {reviewView === "ai" ? (
+        <>
+          <div className="agents-header">
+            <div className="agents-title">Agent Team</div>
+            <div className="briefing-meta">8 findings &middot; 5 agents</div>
+          </div>
+
+          <div className="agents-grid">
+            {AGENTS.map((a) => {
+              const isRouter = a.name === "Escalation Router";
+              const findings = DATA.findings.filter((f) => f.agent === a.name);
+              const s = agentState[a.name];
+              const statusCls = s.status === "running" ? "running" : s.status === "done" ? "done" : "";
+              return (
+                <div key={a.name} className={`agent ${statusCls} ${isRouter ? "routerwide" : ""}`}>
+                  <div className="agent-head">
+                    <div className="agent-head-left">
+                      <div className="agent-icon">{ICONS[a.icon]}</div>
+                      <div>
+                        <div className="agent-name">{a.name}</div>
+                        <div className="agent-sub" dangerouslySetInnerHTML={{ __html: a.sub }} />
+                      </div>
+                    </div>
+                    <div className="agent-status"><span className="dot" />{s.label}</div>
+                  </div>
+                  <div className="agent-body">
+                    {isRouter ? (
+                      s.routerDone ? (
+                        <div className="router-cols">
+                          <div className="router-col escalate">
+                            <div className="router-col-label">Escalate to CFO</div>
+                            <div className="router-col-count">{escalate.length} items</div>
+                            <div className="router-col-dollars">{fmt(sumDollars(escalate))} at stake</div>
+                          </div>
+                          <div className="router-col flag">
+                            <div className="router-col-label">Flag for review</div>
+                            <div className="router-col-count">{flag.length} items</div>
+                            <div className="router-col-dollars">{fmt(sumDollars(flag))}</div>
+                          </div>
+                          <div className="router-col monitor">
+                            <div className="router-col-label">Monitor only</div>
+                            <div className="router-col-count">{monitor.length} items</div>
+                            <div className="router-col-dollars">{fmt(sumDollars(monitor))}</div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="agent-idle">Click Run Finance Team to synthesize agent outputs into CFO briefing.</div>
+                      )
+                    ) : findings.length ? (
+                      findings.map((f) => (
+                        <div
+                          key={f.id}
+                          className={`finding ${f.severity} ${s.revealedIds.has(f.id) ? "show" : ""} ${autoEscalating && ESCALATE_CRITICAL_HIGH(f) && !escalatedIds.has(f.id) ? "auto-escalate-pending" : ""}`}
+                        >
+                          <div className="finding-top">
+                            <div className="finding-label" dangerouslySetInnerHTML={{ __html: f.label }} />
+                            <div className="finding-dollars">{fmt(f.dollars)}</div>
+                          </div>
+                          <div className="finding-detail" dangerouslySetInnerHTML={{ __html: f.detail }} />
+                          <div className="finding-bottom">
+                            <div className="finding-action"><b>Action:</b> {f.recommendation}</div>
+                            <div className="finding-bottom-right">
+                              {f.action === "escalate" && (
+                                <button
+                                  type="button"
+                                  className="escalate-cfo-btn"
+                                  disabled={escalatedIds.has(f.id) || autoEscalating}
+                                  onClick={() => escalateOne(f)}
+                                >
+                                  {escalatedIds.has(f.id) ? "✓ Escalated to CFO" : "Escalate to CFO"}
+                                </button>
+                              )}
+                              <div className={`severity-pill ${f.severity}`}>{f.action.toUpperCase()}</div>
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="agent-idle">No findings.</div>
+                    )}
                   </div>
                 </div>
-                <div className="agent-status"><span className="dot" />{s.label}</div>
-              </div>
-              <div className="agent-body">
-                {isRouter ? (
-                  s.routerDone ? (
-                    <div className="router-cols">
-                      <div className="router-col escalate">
-                        <div className="router-col-label">Escalate to CFO</div>
-                        <div className="router-col-count">{escalate.length} items</div>
-                        <div className="router-col-dollars">{fmt(sumDollars(escalate))} at stake</div>
-                      </div>
-                      <div className="router-col flag">
-                        <div className="router-col-label">Flag for review</div>
-                        <div className="router-col-count">{flag.length} items</div>
-                        <div className="router-col-dollars">{fmt(sumDollars(flag))}</div>
-                      </div>
-                      <div className="router-col monitor">
-                        <div className="router-col-label">Monitor only</div>
-                        <div className="router-col-count">{monitor.length} items</div>
-                        <div className="router-col-dollars">{fmt(sumDollars(monitor))}</div>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="agent-idle">Click Run Finance Team to synthesize agent outputs into CFO briefing.</div>
-                  )
-                ) : findings.length ? (
-                  findings.map((f) => (
-                    <div
-                      key={f.id}
-                      className={`finding ${f.severity} ${s.revealedIds.has(f.id) ? "show" : ""} ${autoEscalating && ESCALATE_CRITICAL_HIGH(f) && !escalatedIds.has(f.id) ? "auto-escalate-pending" : ""}`}
-                    >
-                      <div className="finding-top">
-                        <div className="finding-label" dangerouslySetInnerHTML={{ __html: f.label }} />
-                        <div className="finding-dollars">{fmt(f.dollars)}</div>
-                      </div>
-                      <div className="finding-detail" dangerouslySetInnerHTML={{ __html: f.detail }} />
-                      <div className="finding-bottom">
-                        <div className="finding-action"><b>Action:</b> {f.recommendation}</div>
-                        <div className="finding-bottom-right">
-                          {f.action === "escalate" && (
-                            <button
-                              type="button"
-                              className="escalate-cfo-btn"
-                              disabled={escalatedIds.has(f.id) || autoEscalating}
-                              onClick={() => escalateOne(f)}
-                            >
-                              {escalatedIds.has(f.id) ? "✓ Escalated to CFO" : "Escalate to CFO"}
-                            </button>
-                          )}
-                          <div className={`severity-pill ${f.severity}`}>{f.action.toUpperCase()}</div>
-                        </div>
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="agent-idle">No findings.</div>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
+              );
+            })}
+          </div>
+        </>
+      ) : (
+        <div className="manual-review-card">
+          <div className="manual-review-title">Weekly Finance Review — Manual</div>
+          <ul className="manual-review-list">
+            {HUMAN_ANALYST_FINDINGS.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <footer className="page-footer">
+        Built on Next.js · Groq · llama-3.3-70b · Live data from acme-data.json
+      </footer>
 
       <style jsx global>{`
         @import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap");
@@ -753,6 +826,16 @@ export default function Page() {
         .chat-msg-user .chat-msg-label { color: var(--text-2); }
         .chat-msg-assistant .chat-msg-label { color: var(--accent); }
         .chat-msg-body { font-size: 13px; color: var(--text); line-height: 1.55; white-space: pre-wrap; }
+        .chat-sources {
+          margin-top: 12px;
+          padding-top: 10px;
+          border-top: 1px solid var(--border);
+          font-family: var(--mono);
+          font-size: 11px;
+          color: var(--text-3);
+          line-height: 1.45;
+          white-space: pre-wrap;
+        }
         .chat-num { font-family: var(--mono); font-weight: 500; color: var(--accent); letter-spacing: -0.02em; }
         .chat-msg-user .chat-num { color: var(--text); }
         .chat-loading { display: flex; align-items: center; gap: 6px; color: var(--text-2); font-style: italic; }
@@ -785,9 +868,78 @@ export default function Page() {
         .chat-send:hover:not(:disabled) { background: #22c55e; transform: translateY(-1px); }
         .chat-send:disabled { background: var(--surface-2); color: var(--text-3); cursor: not-allowed; transform: none; }
 
+        .view-toggle-wrap {
+          margin-bottom: 16px;
+        }
+        .view-toggle {
+          display: inline-flex;
+          align-items: center;
+          background: var(--surface);
+          border: 1px solid var(--border-strong);
+          border-radius: 999px;
+          padding: 4px;
+          gap: 4px;
+        }
+        .view-toggle-btn {
+          border: 0;
+          background: transparent;
+          color: var(--text-2);
+          border-radius: 999px;
+          padding: 8px 14px;
+          font-size: 12px;
+          font-weight: 600;
+          font-family: var(--sans);
+          cursor: pointer;
+          transition: all 0.15s ease;
+          white-space: nowrap;
+        }
+        .view-toggle-btn.active {
+          background: var(--surface-2);
+          color: var(--text);
+          box-shadow: inset 0 0 0 1px var(--border-strong);
+        }
+        .view-toggle-btn:hover:not(.active) {
+          color: var(--text);
+        }
+        .view-toggle-caption {
+          margin-top: 8px;
+          color: var(--text-3);
+          font-size: 12px;
+          line-height: 1.45;
+        }
+        .caption-num {
+          font-family: var(--mono);
+          color: var(--text-2);
+        }
+
         .agents-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 14px; }
         .agents-title { font-size: 11px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.08em; font-weight: 500; }
         .agents-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        .manual-review-card {
+          background: var(--surface);
+          border: 1px solid var(--border);
+          border-radius: 12px;
+          padding: 20px 22px;
+          margin-bottom: 8px;
+        }
+        .manual-review-title {
+          color: var(--text-2);
+          font-size: 12px;
+          text-transform: uppercase;
+          letter-spacing: 0.08em;
+          font-weight: 500;
+          margin-bottom: 12px;
+        }
+        .manual-review-list {
+          margin: 0;
+          padding-left: 18px;
+          display: flex;
+          flex-direction: column;
+          gap: 9px;
+          color: var(--text-3);
+          font-size: 13px;
+          line-height: 1.55;
+        }
         .agent { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
         .agent.routerwide { grid-column: 1 / -1; }
         .agent-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--border); }
@@ -856,6 +1008,16 @@ export default function Page() {
         .router-col.monitor .router-col-label { color: var(--low); }
         .router-col-count { font-family: var(--mono); font-size: 22px; font-weight: 500; margin-bottom: 4px; }
         .router-col-dollars { font-size: 12px; color: var(--text-2); font-family: var(--mono); }
+
+        .page-footer {
+          margin-top: 40px;
+          padding: 16px 0 8px;
+          text-align: center;
+          font-family: var(--mono);
+          font-size: 11px;
+          color: var(--text-3);
+          border-top: 1px solid var(--border);
+        }
       `}</style>
     </div>
   );

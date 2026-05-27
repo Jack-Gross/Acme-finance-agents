@@ -2,7 +2,8 @@ import { readFile } from "fs/promises";
 import path from "path";
 
 const SYSTEM_PROMPT =
-  "You are a finance agent for Acme Robotics. Use only the provided data to answer. Be concise, cite specific numbers and invoice refs. If asked about something not in the data, say so.";
+  "You are a finance agent for Acme Robotics. Use only the provided data to answer. Be concise, cite specific numbers and invoice refs. If asked about something not in the data, say so. " +
+  'End every answer with a single line starting with "Sources:" that cites the specific finding IDs, agent names, and/or invoice references you used (e.g., "Sources: Vendor Watch · APEX-2026-104, APEX-2026-108"). Do not omit this line.';
 
 const GROQ_MODEL = "llama-3.3-70b-versatile";
 const VARIANCE_THRESHOLD_PCT = 5;
