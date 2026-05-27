@@ -1,5 +1,6 @@
 import { readFile } from "fs/promises";
 import path from "path";
+import { chatWithFailover, LlmProviderError, type ChatMessage } from "@/lib/llm-chat";
 
 const ROUTER_MODEL = "llama-3.1-8b-instant";
 const MAIN_MODEL = "llama-3.3-70b-versatile";
@@ -89,8 +90,6 @@ type AcmeData = {
   arAging?: AgingRow[];
   budget?: Budget;
 };
-
-type GroqMessage = { role: "system" | "user"; content: string };
 
 async function loadFinanceData() {
   const filePath = path.join(process.cwd(), "data", "acme-data.json");
@@ -239,52 +238,22 @@ function parseAgentId(raw: string): AgentId {
   return "escalation-router";
 }
 
-async function groqChat(
-  apiKey: string,
-  model: string,
-  messages: GroqMessage[],
-  maxTokens: number
-): Promise<string> {
-  const groqRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model,
-      temperature: model === ROUTER_MODEL ? 0 : 0.2,
-      max_tokens: maxTokens,
-      messages,
-    }),
-  });
-
-  if (!groqRes.ok) {
-    const errBody = await groqRes.text();
-    console.error("Groq API error:", groqRes.status, errBody);
-    throw new Error("GROQ_ERROR");
-  }
-
-  const completion = (await groqRes.json()) as {
-    choices?: { message?: { content?: string } }[];
-  };
-  const content = completion.choices?.[0]?.message?.content?.trim();
-  if (!content) {
-    throw new Error("GROQ_EMPTY");
-  }
-  return content;
-}
-
-async function classifyAgent(apiKey: string, question: string): Promise<AgentId> {
-  const routerResult = await groqChat(
-    apiKey,
-    ROUTER_MODEL,
-    [
+async function classifyAgent(
+  groqApiKey: string,
+  cerebrasApiKey: string | undefined,
+  question: string
+): Promise<AgentId> {
+  const routerResult = await chatWithFailover({
+    groqApiKey,
+    cerebrasApiKey,
+    model: ROUTER_MODEL,
+    messages: [
       { role: "system", content: ROUTER_SYSTEM_PROMPT },
       { role: "user", content: question },
     ],
-    32
-  );
+    maxTokens: 32,
+    temperature: 0,
+  });
   console.log("Router classified as:", routerResult);
   return parseAgentId(routerResult);
 }
@@ -298,41 +267,51 @@ export async function POST(request: Request) {
       return Response.json({ error: "Question is required." }, { status: 400 });
     }
 
-    const apiKey = process.env.GROQ_API_KEY?.trim();
-    if (!apiKey) {
+    const groqApiKey = process.env.GROQ_API_KEY?.trim();
+    if (!groqApiKey) {
       return Response.json(
         { error: "GROQ_API_KEY is not configured. Add it to .env.local and restart the dev server." },
         { status: 500 }
       );
     }
+    const cerebrasApiKey = process.env.CEREBRAS_API_KEY?.trim();
 
-    const agentId = await classifyAgent(apiKey, question);
+    const agentId = await classifyAgent(groqApiKey, cerebrasApiKey, question);
     const agentConfig = AGENTS[agentId];
     const financeData = trimFinanceData(await loadFinanceData());
 
-    const answer = await groqChat(
-      apiKey,
-      MAIN_MODEL,
-      [
-        { role: "system", content: agentConfig.systemPrompt },
-        {
-          role: "user",
-          content: `Finance data (JSON):\n${JSON.stringify(financeData)}\n\nQuestion: ${question}`,
-        },
-      ],
-      1024
-    );
+    const messages: ChatMessage[] = [
+      { role: "system", content: agentConfig.systemPrompt },
+      {
+        role: "user",
+        content: `Finance data (JSON):\n${JSON.stringify(financeData)}\n\nQuestion: ${question}`,
+      },
+    ];
+
+    const answer = await chatWithFailover({
+      groqApiKey,
+      cerebrasApiKey,
+      model: MAIN_MODEL,
+      messages,
+      maxTokens: 1024,
+      temperature: 0.2,
+    });
 
     return Response.json({ answer, agent: agentConfig.displayName });
   } catch (err) {
-    if (err instanceof Error && err.message === "GROQ_ERROR") {
+    if (err instanceof LlmProviderError) {
       return Response.json(
-        { error: "The finance agent could not complete your request. Please try again." },
+        {
+          error: err.message,
+          groqStatus: err.groqError.status,
+          groqMessage: err.groqError.message,
+          ...(err.cerebrasError && {
+            cerebrasStatus: err.cerebrasError.status,
+            cerebrasMessage: err.cerebrasError.message,
+          }),
+        },
         { status: 502 }
       );
-    }
-    if (err instanceof Error && err.message === "GROQ_EMPTY") {
-      return Response.json({ error: "No answer returned from the model." }, { status: 502 });
     }
     console.error("POST /api/ask error:", err);
     return Response.json(

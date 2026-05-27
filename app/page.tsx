@@ -123,7 +123,14 @@ const DATA = {
   ],
 };
 
-type Finding = (typeof DATA.findings)[number];
+type Finding = (typeof DATA.findings)[number] & { isLive?: boolean };
+
+const AGENT_SLUG: Record<string, string> = {
+  "Vendor Watch": "vendor-watch",
+  "Budget Variance Analyst": "budget-variance",
+  "Cash Position Reporter": "cash-position",
+  APAR: "apar",
+};
 
 const AGENTS = [
   { name: "Vendor Watch", sub: "26 vendors monitored", icon: "shield" },
@@ -193,6 +200,10 @@ export default function Page() {
   const [chatLoading, setChatLoading] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
   const [reviewView, setReviewView] = useState<"ai" | "human">("ai");
+  const [liveFindings, setLiveFindings] = useState<Record<string, Finding[]>>({});
+  const [liveAnalyzingAgent, setLiveAnalyzingAgent] = useState<string | null>(null);
+  const [liveAnalyzeError, setLiveAnalyzeError] = useState<Record<string, string | null>>({});
+  const [liveNoNewAgent, setLiveNoNewAgent] = useState<string | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -205,6 +216,12 @@ export default function Page() {
     return () => clearTimeout(t);
   }, [toast]);
 
+  useEffect(() => {
+    if (!liveNoNewAgent) return;
+    const t = setTimeout(() => setLiveNoNewAgent(null), 3000);
+    return () => clearTimeout(t);
+  }, [liveNoNewAgent]);
+
   const updateAgent = (name: string, patch: Partial<AgentState>) => {
     setAgentState((prev) => ({ ...prev, [name]: { ...prev[name], ...patch } }));
   };
@@ -214,6 +231,8 @@ export default function Page() {
     setBriefingShown(false);
     // Reset
     setAgentState(Object.fromEntries(AGENTS.map((a) => [a.name, { status: "ready" as const, label: "Ready", revealedIds: new Set<string>(), routerDone: false }])));
+    setLiveFindings({});
+    setLiveAnalyzeError({});
     await sleep(80);
 
     for (const a of AGENTS.slice(0, 4)) {
@@ -265,6 +284,80 @@ export default function Page() {
     await sleep(280);
     setToast(`Escalated ${targets.length} critical and high findings to CFO via email`);
     setAutoEscalating(false);
+  }
+
+  async function runLiveAnalysis(agentName: string) {
+    const slug = AGENT_SLUG[agentName];
+    if (!slug || liveAnalyzingAgent) return;
+
+    setLiveAnalyzeError((prev) => ({ ...prev, [agentName]: null }));
+    setLiveNoNewAgent((prev) => (prev === agentName ? null : prev));
+    setLiveAnalyzingAgent(agentName);
+
+    try {
+      const res = await fetch("/api/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agent: slug }),
+      });
+      const data = (await res.json()) as {
+        finding?: Omit<Finding, "id" | "agent" | "isLive">;
+        agent?: string;
+        noNewFindings?: boolean;
+        error?: string;
+      };
+      if (!res.ok) {
+        throw new Error(data.error || "Analysis failed.");
+      }
+      if (data.noNewFindings) {
+        setLiveNoNewAgent(agentName);
+        return;
+      }
+      if (!data.finding) {
+        throw new Error(data.error || "Analysis failed.");
+      }
+
+      const newFinding: Finding = {
+        id: `live-${slug}-${Date.now()}`,
+        agent: agentName,
+        isLive: true,
+        ...data.finding,
+      };
+
+      setLiveFindings((prev) => ({
+        ...prev,
+        [agentName]: [newFinding, ...(prev[agentName] ?? [])],
+      }));
+      setAgentState((prev) => ({
+        ...prev,
+        [agentName]: {
+          ...prev[agentName],
+          revealedIds: new Set([newFinding.id, ...prev[agentName].revealedIds]),
+        },
+      }));
+    } catch {
+      setLiveAnalyzeError((prev) => ({
+        ...prev,
+        [agentName]: "Analysis failed, retry",
+      }));
+    } finally {
+      setLiveAnalyzingAgent(null);
+    }
+  }
+
+  function dismissLiveFinding(agentName: string, findingId: string) {
+    setLiveFindings((prev) => ({
+      ...prev,
+      [agentName]: (prev[agentName] ?? []).filter((f) => f.id !== findingId),
+    }));
+    setAgentState((prev) => {
+      const revealed = new Set(prev[agentName].revealedIds);
+      revealed.delete(findingId);
+      return {
+        ...prev,
+        [agentName]: { ...prev[agentName], revealedIds: revealed },
+      };
+    });
   }
 
   async function sendQuestion(questionRaw: string) {
@@ -605,7 +698,10 @@ export default function Page() {
           <div className="agents-grid">
             {AGENTS.map((a) => {
               const isRouter = a.name === "Escalation Router";
-              const findings = DATA.findings.filter((f) => f.agent === a.name);
+              const staticFindings = DATA.findings.filter((f) => f.agent === a.name);
+              const live = liveFindings[a.name] ?? [];
+              const findings = [...live, ...staticFindings];
+              const analyzingLive = liveAnalyzingAgent === a.name;
               const s = agentState[a.name];
               const statusCls = s.status === "running" ? "running" : s.status === "done" ? "done" : "";
               return (
@@ -621,6 +717,53 @@ export default function Page() {
                     <div className="agent-status"><span className="dot" />{s.label}</div>
                   </div>
                   <div className="agent-body">
+                    {!isRouter && (
+                      <div className="live-analysis-row">
+                        <button
+                          type="button"
+                          className="live-analysis-btn"
+                          onClick={() => runLiveAnalysis(a.name)}
+                          disabled={!!liveAnalyzingAgent}
+                        >
+                          {analyzingLive ? (
+                            <>
+                              <svg
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2.5"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                className="spin"
+                                aria-hidden
+                              >
+                                <line x1="12" y1="2" x2="12" y2="6" />
+                                <line x1="12" y1="18" x2="12" y2="22" />
+                                <line x1="4.93" y1="4.93" x2="7.76" y2="7.76" />
+                                <line x1="16.24" y1="16.24" x2="19.07" y2="19.07" />
+                                <line x1="2" y1="12" x2="6" y2="12" />
+                                <line x1="18" y1="12" x2="22" y2="12" />
+                                <line x1="4.93" y1="19.07" x2="7.76" y2="16.24" />
+                                <line x1="16.24" y1="7.76" x2="19.07" y2="4.93" />
+                              </svg>
+                              Analyzing…
+                            </>
+                          ) : (
+                            "Run Live Analysis"
+                          )}
+                        </button>
+                        {liveNoNewAgent === a.name && (
+                          <span className="live-no-new-msg" role="status">
+                            ✓ No new findings beyond existing report
+                          </span>
+                        )}
+                        {liveAnalyzeError[a.name] && (
+                          <span className="live-analysis-error" role="alert">
+                            {liveAnalyzeError[a.name]}
+                          </span>
+                        )}
+                      </div>
+                    )}
                     {isRouter ? (
                       s.routerDone ? (
                         <div className="router-cols">
@@ -647,13 +790,34 @@ export default function Page() {
                       findings.map((f) => (
                         <div
                           key={f.id}
-                          className={`finding ${f.severity} ${s.revealedIds.has(f.id) ? "show" : ""} ${autoEscalating && ESCALATE_CRITICAL_HIGH(f) && !escalatedIds.has(f.id) ? "auto-escalate-pending" : ""}`}
+                          className={`finding ${f.severity} ${f.isLive || s.revealedIds.has(f.id) ? "show" : ""} ${f.isLive ? "finding-live" : ""} ${autoEscalating && ESCALATE_CRITICAL_HIGH(f) && !escalatedIds.has(f.id) ? "auto-escalate-pending" : ""}`}
                         >
+                          {f.isLive && (
+                            <div className="live-finding-meta">
+                              <span className="live-badge">LIVE</span>
+                              <button
+                                type="button"
+                                className="live-dismiss-btn"
+                                onClick={() => dismissLiveFinding(a.name, f.id)}
+                                aria-label="Dismiss live finding"
+                              >
+                                ×
+                              </button>
+                            </div>
+                          )}
                           <div className="finding-top">
-                            <div className="finding-label" dangerouslySetInnerHTML={{ __html: f.label }} />
+                            {f.isLive ? (
+                              <div className="finding-label">{f.label}</div>
+                            ) : (
+                              <div className="finding-label" dangerouslySetInnerHTML={{ __html: f.label }} />
+                            )}
                             <div className="finding-dollars">{fmt(f.dollars)}</div>
                           </div>
-                          <div className="finding-detail" dangerouslySetInnerHTML={{ __html: f.detail }} />
+                          {f.isLive ? (
+                            <div className="finding-detail">{f.detail}</div>
+                          ) : (
+                            <div className="finding-detail" dangerouslySetInnerHTML={{ __html: f.detail }} />
+                          )}
                           <div className="finding-bottom">
                             <div className="finding-action"><b>Action:</b> {f.recommendation}</div>
                             <div className="finding-bottom-right">
@@ -990,10 +1154,56 @@ export default function Page() {
         .agent.done .agent-status .dot { background: var(--accent); }
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
         .agent-body { padding: 16px 20px; min-height: 80px; display: flex; flex-direction: column; gap: 10px; }
+        .live-analysis-row {
+          display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+          padding-bottom: 10px; margin-bottom: 2px; border-bottom: 1px solid var(--border);
+        }
+        .live-analysis-btn {
+          background: var(--surface); border: 1px solid var(--border-strong); color: var(--text);
+          border-radius: 8px; padding: 8px 14px; font-family: var(--sans); font-size: 12px; font-weight: 600;
+          cursor: pointer; display: inline-flex; align-items: center; gap: 8px;
+          transition: border-color 0.15s, background 0.15s, color 0.15s;
+        }
+        .live-analysis-btn:hover:not(:disabled) {
+          border-color: rgba(74,222,128,0.4); background: var(--accent-bg); color: var(--accent);
+        }
+        .live-analysis-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+        .live-analysis-btn svg { width: 14px; height: 14px; }
+        .live-analysis-error { font-size: 12px; color: var(--critical); font-family: var(--mono); }
+        .live-no-new-msg { font-size: 12px; color: var(--accent); font-family: var(--mono); }
         .agent-idle { font-size: 13px; color: var(--text-3); font-style: italic; }
 
-        .finding { background: var(--surface-2); border-radius: 10px; padding: 14px 16px; border-left: 3px solid var(--low); opacity: 0; transform: translateY(8px); transition: opacity 0.4s ease, transform 0.4s ease; }
+        .finding { background: var(--surface-2); border-radius: 10px; padding: 14px 16px; border-left: 3px solid var(--low); opacity: 0; transform: translateY(8px); transition: opacity 0.4s ease, transform 0.4s ease; position: relative; }
         .finding.show { opacity: 1; transform: translateY(0); }
+        .finding-live {
+          animation: liveFindingPulse 2.2s ease-in-out infinite;
+          box-shadow: 0 0 0 1px rgba(74,222,128,0.15), 0 0 24px rgba(74,222,128,0.06);
+        }
+        @keyframes liveFindingPulse {
+          0%, 100% { box-shadow: 0 0 0 1px rgba(74,222,128,0.12), 0 0 16px rgba(74,222,128,0.04); }
+          50% { box-shadow: 0 0 0 1px rgba(74,222,128,0.35), 0 0 28px rgba(74,222,128,0.12); }
+        }
+        .live-finding-meta {
+          position: absolute; top: 8px; right: 8px; z-index: 1;
+          display: flex; align-items: center; gap: 6px;
+        }
+        .live-badge {
+          font-size: 9px; font-family: var(--mono); font-weight: 600; letter-spacing: 0.1em;
+          padding: 3px 7px; border-radius: 999px;
+          background: var(--accent-bg); color: var(--accent);
+          border: 1px solid rgba(74,222,128,0.35);
+        }
+        .live-dismiss-btn {
+          width: 22px; height: 22px; padding: 0; border: 1px solid var(--border-strong);
+          border-radius: 6px; background: var(--surface); color: var(--text-3);
+          font-size: 16px; line-height: 1; font-family: var(--sans); cursor: pointer;
+          display: flex; align-items: center; justify-content: center;
+          transition: color 0.15s, border-color 0.15s, background 0.15s;
+        }
+        .live-dismiss-btn:hover {
+          color: var(--text); border-color: rgba(255,255,255,0.2); background: var(--surface-2);
+        }
+        .finding-live .finding-top { padding-right: 88px; }
         .finding.critical { border-left-color: var(--critical); }
         .finding.high { border-left-color: var(--high); }
         .finding.medium { border-left-color: var(--medium); }
