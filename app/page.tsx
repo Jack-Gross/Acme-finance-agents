@@ -2,7 +2,28 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
-type ChatMessage = { role: "user" | "assistant"; content: string };
+type ChatMessage = { role: "user" | "assistant"; content: string; agent?: string };
+
+/** Partial, case-insensitive match — order matters (longer/more specific first). */
+function getChatAgentLabelColor(agent: string | undefined): string | undefined {
+  if (!agent?.trim()) return undefined;
+  const key = agent.trim().toLowerCase();
+
+  const rules: [needle: string, color: string][] = [
+    ["escalation", "#4ade80"],
+    ["budget", "#fbbf24"],
+    ["vendor", "#a78bfa"],
+    ["cash", "#60a5fa"],
+    ["apar", "#2dd4bf"],
+    ["payable", "#2dd4bf"],
+    ["receivable", "#2dd4bf"],
+  ];
+
+  for (const [needle, color] of rules) {
+    if (key.includes(needle)) return color;
+  }
+  return undefined;
+}
 
 const CHAT_STARTERS = [
   "Why is burn accelerating?",
@@ -261,7 +282,7 @@ export default function Page() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question }),
       });
-      const data = (await res.json()) as { answer?: string; error?: string };
+      const data = (await res.json()) as { answer?: string; agent?: string; error?: string };
       if (!res.ok) {
         throw new Error(data.error || "Request failed. Please try again.");
       }
@@ -269,7 +290,11 @@ export default function Page() {
       if (!answer) {
         throw new Error("No answer returned.");
       }
-      setChatMessages((prev) => [...prev, { role: "assistant", content: answer }]);
+      console.log("[chat] agent from API:", data.agent);
+      setChatMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: answer, agent: data.agent },
+      ]);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Something went wrong. Please try again.";
       setChatError(message);
@@ -492,7 +517,16 @@ export default function Page() {
         <div className="chat-history" aria-live="polite">
           {chatMessages.map((msg, i) => (
             <div key={i} className={`chat-msg chat-msg-${msg.role}`}>
-              <div className="chat-msg-label">{msg.role === "user" ? "You" : "Finance Agent"}</div>
+              <div
+                className="chat-msg-label"
+                style={
+                  msg.role === "assistant" && msg.agent
+                    ? { color: getChatAgentLabelColor(msg.agent) }
+                    : undefined
+                }
+              >
+                {msg.role === "user" ? "You" : msg.agent ?? "Finance Agent"}
+              </div>
               <div className="chat-msg-body">{formatChatMessage(msg.content)}</div>
             </div>
           ))}
