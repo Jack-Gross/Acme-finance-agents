@@ -1,36 +1,71 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Acme Robotics Finance Command Center
 
-## Getting Started
+An AI agent team that keeps a finance department running after the VP of Finance walks out.
 
-First, run the development server:
+Built in 24 hours for the Cal Poly Vibe Coding Build Night (1st place, $300 prize).
+
+## The Problem
+
+A mid-size company loses their VP of Finance with no transition plan. The CFO is drowning. Hiring a replacement takes 3-6 months. The recurring work (vendor monitoring, budget variance, AR collections, weekly cash reports) still has to happen.
+
+## The Solution
+
+Five specialized AI agents that each watch a different part of finance. They surface findings, route routine items, and escalate only what needs the CFO's attention.
+
+- **Vendor Watch** — monitors vendor spend, flags duplicates and unvetted vendors
+- **Budget Variance Analyst** — compares actual vs planned spending
+- **Cash Position Reporter** — tracks weekly burn and runway
+- **APAR** — accounts payable and receivable, identifies collection risks
+- **Escalation Router** — synthesizes outputs, writes the CFO weekly briefing
+
+## What It Caught
+
+On the demo dataset, the agents surfaced $73,500 needing CFO attention, including:
+
+- $14,500 duplicate payment to Apex Logistics (immediately recoverable)
+- $48,000 receivable from MidWest Fulfillment, 92 days overdue
+- $11,000 paid to two unvetted vendors with no contracts on file
+- Marketing $49K over budget on conference sponsorships
+- AP aging report had 10 invoices with due dates before issue dates
+
+## Tech Stack
+
+- Next.js 14 (App Router) + TypeScript + Tailwind
+- Groq (llama-3.3-70b-versatile) as primary LLM
+- Cerebras (gpt-oss-120b) as fallback for rate limits
+- Per-agent system prompts route questions to the right specialist
+- Static dataset (acme-data.json) stands in for a real Drive/QuickBooks sync
+
+## Key Features
+
+- Live agent run sequence with animated reveals
+- "Human Analyst View" toggle to show what gets missed without AI
+- One-click escalate to CFO with toast notifications
+- ROI panel: $50/mo agents vs $8,300/mo human analyst (166x cheaper)
+- Live chat with agent routing (Vendor Watch answers vendor questions, APAR answers AR questions, etc.)
+- Run Live Analysis button for ad-hoc anomaly detection per agent
+
+## Running Locally
+
+```bash
+npm install
+```
+
+Create `.env.local`:
+
+```
+GROQ_API_KEY=your_key
+CEREBRAS_API_KEY=your_key
+```
+
+Then:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open localhost:3000.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Built By
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Jack Gross — Cal Poly San Luis Obispo
